@@ -1,0 +1,17 @@
+@import "tailwindcss";
+/* 👈 Add this line to tell Tailwind to toggle dark rules when the .dark class is active */
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-brand-dark: #191919;
+  --color-brand-light: #fbfbdf;
+  --color-brand-accent: #58cc02;
+  --color-brand-purple: #7f56d9;
+}
+
+body {
+  margin: 0;
+  background-color: #fbfbdf;
+  color: #191919;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}

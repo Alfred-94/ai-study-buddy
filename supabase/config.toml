@@ -1,0 +1,33 @@
+
+[functions.ai-coach]
+enabled = true
+verify_jwt = false
+import_map = "./functions/ai-coach/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/ai-coach/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/ai-coach/*.html" ]
+
+[functions.generate-quiz]
+enabled = true
+verify_jwt = false
+import_map = "./functions/generate-quiz/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/generate-quiz/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/generate-quiz/*.html" ]
+
+[functions.gemini-coach]
+enabled = true
+verify_jwt = false
+import_map = "./functions/gemini-coach/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/gemini-coach/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/gemini-coach/*.html" ]
