@@ -21,6 +21,8 @@ import {
   FileUp
 } from "lucide-react";
 
+
+
 const quickActions = [
   { title: "Explain Concept", desc: "Get detailed explanations for any topic.", icon: Brain, color: "from-violet-500 to-purple-600" },
   { title: "Generate Quiz", desc: "Create quizzes from any topic instantly.", icon: Sparkles, color: "from-purple-500 to-fuchsia-500" },
@@ -52,19 +54,32 @@ export default function AiCoach() {
     { title: "Personalized Learning Plan", text: "Unlock custom schedules by interacting with your AI Coach.", icon: BookOpen },
   ]);
 
+  const [messages,setMessages] = useState([
+     {
+    type: "ai",
+    text: "Ready for today?",
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+  ]);
+
   // Flashcards state
   const [generatedCards, setGeneratedCards] = useState([]);
   const [activeCardIndex, setActiveCardIndex] = useState(0);
   const [isCardFlipped, setIsCardFlipped] = useState(false);
 
-  // Primary messages stream setup
-  const [messages, setMessages] = useState([
-    {
-      type: "ai",
-      text: "Hello Scholar! 👋 I am your dedicated AI Study Coach. Select a quick action card above, click 'Link to Coach' on your vault documents on the right, upload/insert a file, or dictate a prompt via microphone!",
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-  ]);
+  
+
+  // Near the top of your AiCoach.jsx component:
+const { 
+  user, 
+  streak = 0, 
+  quizzesMastered = 0,
+  language = "English (US)",
+  addNotification
+} = useApp();
+
+// Get the user's name from metadata, falling back to a default friendly title
+const scholarName = user?.user_metadata?.full_name || "Scholar";
 
   // Local Storage Session sync
   const [sessions, setSessions] = useState(() => {
@@ -76,6 +91,37 @@ export default function AiCoach() {
       { id: "sess_default_1", title: "Welcome Orientation", subtitle: "General Study Q&A", time: "Just Now", messages: [] }
     ];
   });
+
+<div className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-100 dark:border-slate-800 shadow-sm flex items-start gap-4">
+  {/* AI Avatar Symbol */}
+  <div className="w-10 h-10 rounded-full bg-purple-50 dark:bg-purple-950/40 flex items-center justify-center text-purple-600 dark:text-purple-400 shrink-0">
+    🤖
+  </div>
+
+  <div className="space-y-2">
+    {/* Dynamic Personalized Header */}
+    <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">
+      Hello {scholarName}! 👋
+    </h3>
+    
+    {/* Dynamic Milestone Context Messaging */}
+    <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+      I am your dedicated AI Study Coach. {streak > 0 ? (
+        <span>You are currently maintaining a strong <strong>{streak}-day study streak</strong>! 🔥 </span>
+      ) : (
+        <span>Let's start your study session and build up your streak today! 🚀 </span>
+      )}
+      [span_3](start_span)You have successfully mastered <strong>{quizzesMastered} quiz sets</strong> so far.[span_3](end_span)
+    </p>
+
+    {/* System Action Helper Subtext */}
+    <div className="pt-2 text-[11px] text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
+      <span className="flex items-center gap-1">✨ Select a quick action card above</span>
+      <span className="flex items-center gap-1">📎 Link document models from your vault</span>
+      <span className="flex items-center gap-1">🎙️ Dictate prompts via microphone</span>
+    </div>
+  </div>
+</div>
 
   const chatEndRef = useRef(null);
 
@@ -93,7 +139,7 @@ export default function AiCoach() {
       rec.lang = "en-US";
 
       rec.onresult = (event) => {
-        const transcript = event.results[event.results.length - 1][0].transcript;
+      const transcript = event.results[event.results.length - 1][0].transcript;
         setInputMessage((prev) => (prev ? prev + " " + transcript : transcript));
       };
       rec.onerror = (e) => {
@@ -147,7 +193,7 @@ export default function AiCoach() {
     
     // Automatically inject into Vault state array asynchronously so it registers globally
     if (setMaterials) {
-      setMaterials((prev) => [filePayload, ...prev]);
+      setMaterials((prev) => [filePayload, ...(prev || [])]);
     }
   };
 
@@ -201,7 +247,30 @@ export default function AiCoach() {
     // Reset inputs immediately
     if (!customPrompt) setInputMessage("");
     setInsertedFile(null); 
-    setLoading(true);
+    
+try {
+  setLoading(true);
+  
+  // 1. Your existing API fetch code that contacts OpenAI/Supabase backend...
+  const aiCoachReplyText = await fetchAiResponse(targetPrompt); 
+
+  // 2. Your existing code that pushes the AI text response into your chat view array...
+  setMessages(prev => [...prev, { 
+    type: "ai", 
+    text: aiCoachReplyText, 
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+  }]);
+
+  // 🔔 THE EXACT INJECTION: Trigger the global notification count badge automatically!
+  if (typeof addNotification === "function") {
+    addNotification(`AI Coach: "${aiCoachReplyText.slice(0, 30)}..."`);
+  }
+
+} catch (error) {
+  console.error("Failed to receive stream", error);
+} finally {
+  setLoading(false);
+}
 
     try {
       const response = await fetch('https://sbeqgxubhzijmotxdinh.supabase.co/functions/v1/gemini-coach', {
@@ -224,7 +293,7 @@ export default function AiCoach() {
       const finalMessageHistory = [...updatedUserMessages, { type: "ai", text: replyText, time: currentTime }];
 
       setMessages(finalMessageHistory);
-      awardXp(15);
+      if (typeof awardXp === "function") awardXp(15);
 
       // Session Memory Sync
       let sessionId = currentSessionId;
@@ -263,7 +332,7 @@ export default function AiCoach() {
 
     if (actionTitle === "Create Flashcards") {
       setGeneratedCards([
-        { q: `What is the primary theme discussed in this context session?`, a: "The core foundational headings and structured formulas." },
+        { q: "What is the primary theme discussed in this context session?", a: "The core foundational headings and structured formulas." },
         { q: "How should you study this layout?", a: "By running active recall cycles matching these coach flashcards." }
       ]);
       setActiveCardIndex(0);
@@ -295,7 +364,8 @@ export default function AiCoach() {
             {quickActions.map((item) => (
               <motion.div
                 key={item.title}
-                whileHover={{ y: -4 }}onClick={() => executeQuickAction(item.title)}
+                whileHover={{ y: -4 }}
+                onClick={() => executeQuickAction(item.title)}
                 className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white shadow-md p-5 cursor-pointer hover:border-purple-200 transition-colors"
               >
                 <div className={`w-12 h-12 rounded-xl bg-gradient-to-r ${item.color} flex items-center justify-center text-white shadow-sm`}>
@@ -315,7 +385,7 @@ export default function AiCoach() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-8 items-start">
-        {/* Core Resizable Chat Workspace Card Panel */}
+        {/* Core Chat Workspace Panel */}
         <motion.div 
           initial={{ opacity: 0 }} 
           animate={{ opacity: 1 }} 
@@ -344,12 +414,12 @@ export default function AiCoach() {
             {generatedCards.length > 0 && (
               <div className="bg-gradient-to-br from-violet-50 to-purple-50 p-6 rounded-2xl border border-violet-100 my-2 space-y-4 shadow-inner">
                 <div className="flex justify-between items-center text-xs text-violet-700 font-bold uppercase tracking-wider">
-                  <span>✨ AI Generated Practice Cards</span>
+                  <span><span>✨ AI Generated Practice Cards</span></span>
                   <span>{activeCardIndex + 1} / {generatedCards.length}</span>
                 </div>
                 <div className="w-full h-32 cursor-pointer [perspective:1000px]" onClick={() => setIsCardFlipped(!isCardFlipped)}>
                   <div className={`w-full h-full relative transition-transform duration-500 [transform-style:preserve-3d] ${isCardFlipped ? '[transform:rotateY(180deg)]' : ''}`}>
-                    <div className="absolute inset-0 w-full h-full bg-white rounded-xl border border-slate-100 flex flex-col justify-center items-center p-4 text-center [backface-visibility:hidden]">
+<div className="absolute inset-0 w-full h-full bg-white rounded-xl border border-slate-100 flex flex-col justify-center items-center p-4 text-center [backface-visibility:hidden]">
                       <span className="text-[10px] uppercase font-bold tracking-widest text-slate-400 mb-1">Question</span>
                       <p className="text-sm font-semibold text-gray-800">{generatedCards[activeCardIndex]?.q}</p>
                     </div>
@@ -369,7 +439,7 @@ export default function AiCoach() {
 
             {messages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.type === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={msg.type === "user" ? "max-w-xl" : "flex gap-3 max-w-2xl"}>
+                <div className={`max-w-xl ${msg.type === "user" ? "max-w-xl" : "flex gap-3 max-w-2xl"}`}>
                   {msg.type !== "user" && <div className="w-10 h-10 rounded-full bg-violet-100 flex items-center justify-center font-bold text-sm flex-shrink-0 shadow-sm">🤖</div>}
                   <div>
                     <div className={`rounded-3xl px-5 py-3 text-sm shadow-sm ${msg.type === "user" ? "bg-gradient-to-r from-violet-600 to-purple-500 text-white rounded-tr-md font-medium whitespace-pre-wrap" : "bg-white border border-gray-100 rounded-tl-md prose prose-sm text-slate-700"}`}>
@@ -395,10 +465,9 @@ export default function AiCoach() {
 
           {/* ACTIVE COMPOSER WRAPPER WITH VOICE & DYNAMIC FILE INSERT CAPABILITIES */}
           <div className="mt-4 space-y-2 flex-shrink-0">
-            {/* Real-time file upload banner indicator block */}
             {insertedFile && (
               <div className="flex items-center justify-between bg-slate-100 rounded-xl px-4 py-2 border border-slate-200 animate-fade-in text-xs font-semibold text-slate-700">
-                <div className="flex items-center gap-2 truncate">
+<div className="flex items-center gap-2 truncate">
                   <FileUp className="w-4 h-4 text-violet-600 flex-shrink-0" /><span className="truncate">Inserted Context: {insertedFile.name} ({insertedFile.size})</span>
                 </div>
                 <button type="button" onClick={() => setInsertedFile(null)} className="p-1 hover:bg-slate-200 rounded-md text-red-500">
@@ -411,7 +480,6 @@ export default function AiCoach() {
               onSubmit={handleSendMessage} 
               className={`border rounded-2xl p-2 flex items-start gap-2 bg-white shadow-sm transition-all ${isListening ? "border-red-500 ring-2 ring-red-100" : "border-gray-200 focus-within:border-violet-500"}`}
             >
-              {/* Invisible file input trigger */}
               <input 
                 type="file" 
                 ref={fileInputRef} 
@@ -419,7 +487,6 @@ export default function AiCoach() {
                 className="hidden" 
               />
 
-              {/* Action Button 1: Insert Local File Material */}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -429,7 +496,6 @@ export default function AiCoach() {
                 <Paperclip size={18} />
               </button>
 
-              {/* Core Text Input Node Area */}
               <textarea
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
@@ -445,7 +511,6 @@ export default function AiCoach() {
                 rows={1}
               />
 
-              {/* Action Button 2: Audio Voice Dictation Toggler */}
               <button
                 type="button"
                 onClick={toggleListening}
@@ -455,7 +520,6 @@ export default function AiCoach() {
                 {isListening ? <MicOff size={18} /> : <Mic size={18} />}
               </button>
 
-              {/* Submit Message Execution Anchor */}
               <button 
                 type="submit" 
                 disabled={loading || (!inputMessage.trim() && !insertedFile)} 
@@ -480,7 +544,7 @@ export default function AiCoach() {
             <div className="space-y-4">
               {dynamicInsights.map((item) => (
                 <div key={item.title} className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 flex gap-3.5 items-start">
-                  <div className="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center text-violet-600 flex-shrink-0 shadow-sm"><item.icon size={16} /></div>
+<div className="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center text-violet-600 flex-shrink-0 shadow-sm"><item.icon size={16} /></div>
                   <div>
                     <h4 className="font-bold text-xs text-gray-900">{item.title}</h4>
                     <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed font-medium">{item.text}</p>
@@ -508,8 +572,7 @@ export default function AiCoach() {
                       <MessageSquare size={14} />
                     </div>
                     <div className="min-w-0">
-                      <h4 className={`font-bold text-xs text-gray-900 truncate 
-                        group-hover:text-violet-600 transition-colors ${currentSessionId === chat.id ? "text-violet-700" : ""}`}>{chat.title}</h4>
+                      <h4 className={`font-bold text-xs text-gray-900 truncate group-hover:text-violet-600 transition-colors ${currentSessionId === chat.id ? "text-violet-700" : ""}}`}>{chat.title}</h4>
                       <p className="text-[11px] text-gray-400 truncate mt-0.5">{chat.subtitle}</p>
                     </div>
                   </div>
@@ -523,3 +586,6 @@ export default function AiCoach() {
     </div>
   );
 }
+                
+              
+                  

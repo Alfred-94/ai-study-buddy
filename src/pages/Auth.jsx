@@ -130,7 +130,7 @@ export default function Auth() {
             disabled={loading}
             className={`w-full h-12 rounded-2xl ${accentBgs[accentColor] || "bg-[#7C3AED]"} text-white text-xs font-bold transition flex items-center justify-center gap-2 shadow-md disabled:opacity-50`}
           >
-            <span>{loading ? "Processing Viewport..." : isSignUp ? "Generate Profile" : "Initialize Session"}</span>
+            <span>{loading ? "Getting things ready..." : isSignUp ? "Generate Profile" : "Sign In"}</span>
             {!loading && <ArrowRight size={14} />}
           </button>
         </form>

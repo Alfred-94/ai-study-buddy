@@ -9,10 +9,20 @@ import {
 } from "lucide-react";
 
 export default function Settings({ forcedSection, setForcedSection, setTopbarAvatar }) {
-  const { theme, setTheme, accentColor, setAccentColor, language, setLanguage, difficulty, setDifficulty } = useApp();
+  // 🟢 CONNECTED TO GLOBAL REALTIME ENGINE (Completely Synchronized)
+  const { 
+    theme, setTheme, 
+    accentColor, setAccentColor, 
+    language, setLanguage, 
+    difficulty, setDifficulty,
+    xp, streak, quizzesMastered, materials,
+    currentUserUserName, setCurrentUserUserName,
+    currentUserAvatar, setCurrentUserAvatar
+  } = useApp();
 
   // Navigation Track
   const [activeTab, setActiveTab] = useState("Profile");
+  const { darkMode, toggleTheme } = useApp();
 
   // Sync internal layout tabs when forced from top header buttons
   useEffect(() => {
@@ -28,8 +38,8 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [bio, setBio] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80");
   const [uploading, setUploading] = useState(false);
+  const [memberSince, setMemberSince] = useState("Loading...");
 
   // Study Preference States
   const [subjects, setSubjects] = useState(["Mathematics", "Computer Science"]);
@@ -60,50 +70,66 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
 
   const t = translations[language] || translations["English (US)"];
 
+  // Calculate dynamic data capacity using file structures
+  const calculateStorageUsed = () => {
+    if (!materials || materials.length === 0) return { mb: 0, percent: 0 };
+    const estimatedBytes = materials.reduce((acc, file) => acc + (file.size || 1024 * 512), 0);
+    const mb = (estimatedBytes / (1024 * 1024)).toFixed(1);
+    const percent = Math.min((mb / 2000) * 100, 100).toFixed(1);
+    return { mb, percent };
+  };
+
+  const { mb: storageMB, percent: storagePercent } = calculateStorageUsed();
+
   // Sync core profile records & configurations from Supabase auth meta-layers
   useEffect(() => {
     async function fetchUserData() {
       if (!supabase?.auth) return;
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        // Core Identity Mapping
         setEmail(user.email || "");
-        if (user.user_metadata?.full_name) setFullName(user.user_metadata.full_name);
+        if (user.created_at) {
+          setMemberSince(new Date(user.created_at).toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' }));
+        }
+        
+        // 🟢 Fallback cascades reading out directly from the synchronized user state
+        const calculatedUsername = user.user_metadata?.username || user.user_metadata?.full_name || currentUserUserName;
+        setFullName(calculatedUsername);
         if (user.user_metadata?.bio) setBio(user.user_metadata.bio);
+       
         if (user.user_metadata?.avatar_url) {
-          setAvatarUrl(user.user_metadata.avatar_url);
           if (typeof setTopbarAvatar === "function") setTopbarAvatar(user.user_metadata.avatar_url);
         }
 
-        // Load Custom Real Preferences Matrix saved in user_metadata
         if (user.user_metadata?.subjects) setSubjects(user.user_metadata.subjects);
         if (user.user_metadata?.dailyGoal) setDailyGoal(user.user_metadata.dailyGoal);
-        
-        // Load Live Notification Checkboxes
         if (user.user_metadata?.studyReminders !== undefined) setStudyReminders(user.user_metadata.studyReminders);
         if (user.user_metadata?.newFeatures !== undefined) setNewFeatures(user.user_metadata.newFeatures);
         if (user.user_metadata?.quizResults !== undefined) setQuizResults(user.user_metadata.quizResults);
         if (user.user_metadata?.weeklyReports !== undefined) setWeeklyReports(user.user_metadata.weeklyReports);
         if (user.user_metadata?.twoFactor !== undefined) setTwoFactor(user.user_metadata.twoFactor);
 
-        // Map live linked provider identities dynamically (Google, GitHub, etc.)
         if (user.app_metadata?.providers) {
           setConnectedProviders(user.app_metadata.providers);
         }
       }
     }
     fetchUserData();
-  }, [setTopbarAvatar]);
+  }, [setTopbarAvatar, currentUserUserName]);
 
-  // Saves General User Details
   const handleProfileSave = async (e) => {
     e.preventDefault();
     try {
       if (supabase?.auth) {
         const { error } = await supabase.auth.updateUser({ 
-          data: { full_name: fullName, bio } 
+          data: { username: fullName, full_name: fullName, bio } 
         });
         if (error) throw error;
+        
+        // 🟢 Broadcast change straight back up into your unified AppContext state instantly
+        if (typeof setCurrentUserUserName === "function") {
+          setCurrentUserUserName(fullName);
+        }
         triggerToast(t.toastProfile || "Profile settings saved successfully!");
       }
     } catch (err) {
@@ -111,7 +137,6 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
     }
   };
 
-  // Saves Preference Matrices (Subjects, Daily Goal, Difficulty)
   const savePreferences = async (updatedSubjects, updatedGoal) => {
     try {
       if (supabase?.auth) {
@@ -127,7 +152,6 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
     }
   };
 
-  // Toggles and Saves Notifications Variables to Metadata
   const saveNotificationToggle = async (key, value) => {
     try {
       if (supabase?.auth) {
@@ -141,7 +165,6 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
     }
   };
 
-  // Handles User Password Security Changes
   const handlePasswordUpdate = async (e) => {
     e.preventDefault();
     if (!newPassword) {
@@ -153,31 +176,29 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
       if (error) throw error;
       triggerToast("Security password updated successfully!");
       setCurrentPassword("");
-      newPassword("");
+      setNewPassword("");
     } catch (err) {
       triggerToast(`Security change rejected: ${err.message}`);
     }
   };
 
-  // Handles Storage Avatar Upload
   const handleAvatarUpload = async (e) => {
     try {
       setUploading(true);
       if (!e.target.files || e.target.files.length === 0) return;
       const file = e.target.files[0];
       const filePath = `avatars/${Date.now()}_${file.name}`;
-
       const { error: uploadError } = await supabase.storage.from("avatars").upload(filePath, file);
       if (uploadError) throw uploadError;
-
       const { data: { publicUrl } } = supabase.storage.from("avatars").getPublicUrl(filePath);
-      setAvatarUrl(publicUrl);
       
       if (typeof setTopbarAvatar === "function") {
         setTopbarAvatar(publicUrl);
       }
+      if (typeof setCurrentUserAvatar === "function") {
+        setCurrentUserAvatar(publicUrl);
+      }
       window.dispatchEvent(new Event("storage_avatar_updated"));
-
       if (supabase?.auth) {
         await supabase.auth.updateUser({ data: { avatar_url: publicUrl } });
       }
@@ -211,7 +232,9 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
     if (supabase?.auth) {
       await supabase.auth.signOut();
     }
-  };const accentColors = [
+  };
+
+  const accentColors = [
     { id: "purple", class: "bg-[#7C3AED]" },
     { id: "blue", class: "bg-blue-500" },
     { id: "cyan", class: "bg-cyan-400" },
@@ -232,22 +255,59 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
     { id: "Language", label: "Language", icon: Globe }
   ];
 
+  const accentBgs = {
+    purple: "bg-[#7C3AED] hover:bg-[#6D28D9]",
+    blue: "bg-blue-500 hover:bg-blue-600",
+    cyan: "bg-cyan-500 hover:bg-cyan-600",
+    green: "bg-emerald-500 hover:bg-emerald-600",
+    orange: "bg-orange-500 hover:bg-orange-600",
+    pink: "bg-rose-500 hover:bg-rose-600"
+  };
+
+  const accentTexts = {
+    purple: "text-[#7C3AED]",
+    blue: "text-blue-500",
+    cyan: "text-cyan-500",
+    green: "text-emerald-500",
+    orange: "text-orange-500",
+    pink: "text-rose-500"
+  };
+
+  // 🟢 HELPER: Dynamic rendering algorithm checks context for image path vs username initials fallback
+  const renderProfileAvatar = () => {
+    if (currentUserAvatar) {
+      return (
+        <img 
+          src={currentUserAvatar} 
+          alt="Avatar" 
+          className="w-full h-full object-cover" 
+        />
+      );
+    }
+    
+    const initials = currentUserUserName
+      ? currentUserUserName.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)
+      : "U";
+
+    return (
+      <div className="w-full h-full bg-gradient-to-br from-violet-600 to-indigo-700 text-white font-extrabold flex items-center justify-center text-sm shadow-inner tracking-wider">
+        {initials}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200 p-4 lg:p-8">
-      
-      {/* Dynamic Action Toast Alerts */}
       <AnimatePresence>
         {toast.show && (
           <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="fixed top-6 right-6 z-50 flex items-center gap-2 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-xl text-xs font-bold">
-            <CheckCircle size={16} className="text-[#7C3AED]" />
+            <CheckCircle size={16} className={`${accentTexts[accentColor] || "text-[#7C3AED]"}`} />
             <span>{toast.message}</span>
           </motion.div>
         )}
       </AnimatePresence>
 
       <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-4 xl:grid-cols-5 gap-6 items-start">
-        
-        {/* COLUMN 1: LEFT SUB-NAVIGATION NAVIGATION */}
         <div className="lg:col-span-1 bg-white dark:bg-slate-900 rounded-3xl p-4 shadow-sm border border-slate-100 dark:border-slate-800 space-y-1">
           {sidebarItems.map((item) => {
             const Icon = item.icon;
@@ -268,11 +328,8 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
             );
           })}
         </div>
-
-        {/* COLUMN 2: CENTER MAIN CONFIG WORKSPACE */}
+        
         <div className="lg:col-span-2 xl:col-span-3 space-y-6">
-          
-          {/* PROFILE CARD */}
           {activeTab === "Profile" && (
             <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
               <div>
@@ -284,18 +341,20 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                 <label htmlFor="avatar-file" className="relative group cursor-pointer shrink-0">
                   <div className="w-20 h-20 rounded-full overflow-hidden border-4 border-slate-50 dark:border-slate-800 shadow-sm relative flex items-center justify-center">
                     {uploading ? (
-                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white"><Loader2 className="animate-spin w-5 h-5" /></div>
-                      ) : (
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition flex items-center justify-center text-white opacity-0 group-hover:opacity-100"><Camera size={16} /></div>
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center text-white z-10"><Loader2 className="animate-spin w-5 h-5" /></div>
+                    ) : (
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition flex items-center justify-center text-white opacity-0 group-hover:opacity-100 z-10"><Camera size={16} /></div>
                     )}
-                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                    
+                    {/* 🟢 SWITCHED TO DYNAMIC PROFILE IMAGE LOGIC */}
+                    {renderProfileAvatar()}
                   </div>
                   <input type="file" id="avatar-file" accept="image/*" disabled={uploading} onChange={handleAvatarUpload} className="hidden" />
                 </label>
 
                 <div className="flex-1 w-full space-y-3.5">
                   <div className="grid grid-cols-4 items-center gap-2">
-                    <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Full Name</label>
+                    <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Username</label>
                     <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="col-span-3 px-4 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl outline-none" />
                   </div>
                   <div className="grid grid-cols-4 items-center gap-2">
@@ -307,21 +366,19 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                     <input type="text" value={bio} onChange={(e) => setBio(e.target.value)} className="col-span-3 px-4 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl outline-none" />
                   </div>
                   <div className="flex justify-end pt-1">
-                    <button type="submit" className="px-4 py-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-xs rounded-xl shadow-sm transition">Save Changes</button>
+                    <button type="submit" className={`px-4 py-2 ${accentBgs[accentColor] || "bg-[#7C3AED]"} text-white font-bold text-xs rounded-xl shadow-sm transition`}>Save Changes</button>
                   </div>
                 </div>
               </form>
             </section>
           )}
 
-          {/* STUDY PREFERENCES CARD */}
           {activeTab === "Preferences" && (
             <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
               <div>
                 <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">Study Preferences</h3>
                 <p className="text-xs text-slate-400 mt-0.5">Customize your study experience and content preferences.</p>
               </div>
-
               <div className="space-y-4 text-sm">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
@@ -336,7 +393,7 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                 </div>
 
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 border-t border-slate-50 dark:border-slate-800 pt-4">
-                <div className="max-w-md">
+                  <div className="max-w-md">
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">Preferred Subjects</h4>
                     <p className="text-[11px] text-slate-400">Select the specific subjects you want your study buddy to center on.</p>
                   </div>
@@ -357,14 +414,13 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                           placeholder="Subject name..." 
                           className="px-2 py-1 text-xs border border-purple-200 rounded-lg outline-none bg-white dark:bg-slate-800 w-24"
                         />
-                        <button onClick={handleAddSubject} className="p-1 text-xs font-bold text-white bg-purple-600 rounded-lg">Add</button>
+                        <button onClick={handleAddSubject} className="px-2 py-1 text-xs font-bold text-white bg-purple-600 rounded-lg">Add</button>
                       </div>
                     ) : (
                       <button onClick={() => setShowSubjectInput(true)} className="p-1 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg text-slate-400 hover:text-slate-600"><Plus size={14} /></button>
                     )}
                   </div>
                 </div>
-
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-slate-50 dark:border-slate-800 pt-4">
                   <div>
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">Daily Study Goal</h4>
@@ -380,9 +436,8 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
             </section>
           )}
 
-          {/* NOTIFICATIONS CONFIG CARD */}
           {activeTab === "Notifications" && (
-            <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
+             <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
               <div>
                 <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">Notifications</h3>
                 <p className="text-xs text-slate-400 mt-0.5">Manage how you want to be notified.</p>
@@ -401,6 +456,7 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                       <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">{notif.desc}</p>
                     </div>
                     <button 
+                      type="button"
                       onClick={() => { const next = !notif.state; notif.set(next); saveNotificationToggle(notif.id, next); }} 
                       className={`w-8 h-4 rounded-full p-0.5 transition-colors relative duration-200 shrink-0 ${notif.state ? "bg-[#7C3AED]" : "bg-slate-200 dark:bg-slate-700"}`}
                     >
@@ -412,7 +468,6 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
             </section>
           )}
 
-          {/* APPEARANCE SYSTEM CARD */}
           {activeTab === "Appearance" && (
             <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
               <div>
@@ -425,16 +480,16 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">Theme</h4>
                     <p className="text-[11px] text-slate-400">Choose your preferred theme.</p>
                   </div>
-                  <div className="flex bg-slate-50 dark:bg-slate-800 p-1 rounded-xl border border-slate-100 dark:border-slate-700">
-                    {["Light", "Dark", "System"].map((m) => (
-                      <button
-                        key={m}
-                        onClick={() => setTheme(m)}
-                        className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${theme === m ? "bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm" : "text-slate-400"}`}
-                      >
-                        {m}
-                      </button>
-                    ))}
+                  <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl w-full sm:max-w-xs">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 dark:text-white">Dark Display Matrix</h4>
+                    </div>
+                    <button
+                      onClick={toggleTheme}
+                      className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors duration-300 ${darkMode ? 'bg-violet-600' : 'bg-gray-300'}`}
+                    >
+                      <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ${darkMode ? 'translate-x-6' : 'translate-x-0'}`} />
+                    </button>
                   </div>
                 </div>
 
@@ -447,9 +502,10 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                     {accentColors.map((color) => (
                       <button
                         key={color.id}
+                        type="button"
                         onClick={() => setAccentColor(color.id)}
                         className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold transition transform active:scale-90 ${color.class}`}
-                        >
+                      >
                         {accentColor === color.id && "✓"}
                       </button>
                     ))}
@@ -459,13 +515,13 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
             </section>
           )}
 
-          {/* PRIVACY & SECURITY PANEL */}
           {activeTab === "Privacy" && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
               <div>
                 <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">Privacy & Security</h3>
                 <p className="text-xs text-slate-400 mt-0.5">Manage your password, account security, and data sharing preferences.</p>
               </div>
+      
               <form onSubmit={handlePasswordUpdate} className="space-y-4 text-sm">
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Current Password</label>
@@ -474,9 +530,9 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-bold text-slate-500 dark:text-slate-400">New Password</label>
                   <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Enter new password" className="max-w-md px-4 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-700 rounded-xl outline-none" />
-                </div>
+                  </div>
                 <div className="flex justify-start">
-                  <button type="submit" className="px-3.5 py-1.5 bg-[#7C3AED] text-white font-bold text-xs rounded-xl hover:bg-[#6D28D9] transition">Update Password</button>
+                  <button type="submit" className={`px-3.5 py-1.5 ${accentBgs[accentColor] || "bg-[#7C3AED]"} text-white font-bold text-xs rounded-xl transition`}>Update Password</button>
                 </div>
                 <div className="flex items-center justify-between border-t border-slate-50 dark:border-slate-800 pt-4">
                   <div>
@@ -495,32 +551,24 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
             </motion.section>
           )}
 
-          {/* SUBSCRIPTION PANEL */}
           {activeTab === "Subscription" && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
               <div>
                 <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">Subscription Plan</h3>
                 <p className="text-xs text-slate-400 mt-0.5">View details regarding your plan status, billing lifecycle, and invoices.</p>
               </div>
+    
               <div className="p-4 bg-purple-50/50 dark:bg-purple-950/10 border border-purple-100/50 dark:border-purple-900/20 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div>
+                <div>
                   <span className="text-[10px] bg-purple-100 dark:bg-purple-950 text-[#7C3AED] dark:text-[#A78BFA] px-2.5 py-0.5 rounded-full font-bold tracking-wider uppercase">Active Plan</span>
                   <h4 className="font-bold text-slate-800 dark:text-slate-100 text-base mt-1">Premium Scholar Tier</h4>
                   <p className="text-xs text-slate-400">Next billing cycle completes on June 25, 2026 ($9.99/mo).</p>
                 </div>
-                <button className="px-4 py-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-xs rounded-xl shadow-sm transition shrink-0">Change Plan</button>
-              </div>
-              <div className="border-t border-slate-50 dark:border-slate-800 pt-4">
-                <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">Payment Methods</h4>
-                <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl">
-                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">•••• •••• •••• 4242 (Visa)</span>
-                  <button className="text-xs font-bold text-[#7C3AED] hover:underline">Edit</button>
-                </div>
+                <button type="button" className={`px-4 py-2 ${accentBgs[accentColor] || "bg-[#7C3AED]"} text-white font-bold text-xs rounded-xl shadow-sm transition shrink-0`}>Change Plan</button>
               </div>
             </motion.section>
           )}
 
-          {/* DATA & STORAGE PANEL */}
           {activeTab === "Storage" && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
               <div>
@@ -531,10 +579,10 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                 <div className="space-y-1.5">
                   <div className="flex justify-between text-xs font-bold">
                     <span className="text-slate-500">Cloud Storage Allocated</span>
-                    <span className="text-slate-800 dark:text-slate-200">142.5 MB / 2.0 GB</span>
+                    <span className="text-slate-800 dark:text-slate-200">{storageMB} MB / 2.0 GB</span>
                   </div>
                   <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#7C3AED] rounded-full" style={{ width: "7.1%" }} />
+                  <div className={`h-full ${accentBgs[accentColor] || "bg-[#7C3AED]"} rounded-full`} style={{ width: `${storagePercent}% `}} />
                   </div>
                 </div>
                 <div className="flex items-center justify-between border-t border-slate-50 dark:border-slate-800 pt-4">
@@ -542,19 +590,18 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
                     <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">Clear Image Cache</h4>
                     <p className="text-[11px] text-slate-400">Free up local browser assets and storage metrics.</p>
                   </div>
-                  <button onClick={() => triggerToast("Local storage cache optimized!")} className="px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold hover:text-rose-500 transition">Clear Cache</button>
+                  <button type="button" onClick={() => triggerToast("Local storage cache optimized!")} className="px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold hover:text-rose-500 transition">Clear Cache</button>
                 </div>
               </div>
             </motion.section>
           )}
 
-          {/* LANGUAGE PANEL */}
           {activeTab === "Language" && (
             <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-4">
               <div>
                 <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">{t.languageTitle || "System Language"}</h3>
                 <p className="text-xs text-slate-400 mt-0.5">Select your primary localization environment framework format.</p>
-                </div>
+              </div>
               <select 
                 value={language}
                 onChange={(e) => { setLanguage(e.target.value); triggerToast(t.toastLang || "Locale switched successfully!"); }}
@@ -566,90 +613,50 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
               </select>
             </motion.section>
           )}
-
-          {/* CONNECTED ACCOUNTS PANEL */}
-          {activeTab === "Connected" && (
-            <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 space-y-6">
-              <div>
-                <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base">Connected Accounts</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Manage single sign-on integrations and connected third-party applications.</p>
-              </div>
-              
-              <div className="space-y-3.5">
-                {[
-                  { id: "google", name: "Google Account", icon: "🌐", alternativeDesc: "Sign-in identity active" },
-                  { id: "github", name: "GitHub Workspace", icon: "💻", alternativeDesc: "Developer environment link available" },
-                  { id: "azure", name: "Microsoft Live ID", icon: "🪟", alternativeDesc: "Enterprise secure link available" }
-                ].map((account) => {
-                  const isConnected = connectedProviders.includes(account.id);
-                  return (
-                    <div key={account.id} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/40 border border-slate-100/50 dark:border-slate-800 rounded-2xl">
-                      <div className="flex items-center gap-3.5">
-                        <span className="text-xl bg-white dark:bg-slate-700 w-10 h-10 rounded-xl flex items-center justify-center shadow-sm shrink-0">{account.icon}</span>
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-700 dark:text-slate-200">{account.name}</h4>
-                          <p className="text-[11px] text-slate-400 mt-0.5">
-                            {isConnected ? "Linked cleanly as current auth partner" : account.alternativeDesc}
-                          </p>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => triggerToast(isConnected ? "SSO provider decoupling must be managed via Auth admin control panel." : "Redirecting to single sign-on security handler...")}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                          isConnected 
-                            ? "bg-slate-100 text-slate-400 cursor-not-allowed dark:bg-slate-800" 
-                            : "bg-[#7C3AED] hover:bg-[#6D28D9] text-white shadow-sm"
-                        }`}
-                      >
-                        {isConnected ? "Linked" : "Connect"}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </motion.section>
-          )}
         </div>
 
         {/* COLUMN 3: RIGHT UTILITY ACCOUNT SIDEBAR */}
         <div className="lg:col-span-1 xl:col-span-1 space-y-6">
-          
-          {/* ACCOUNT STATS SUMMARY */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-sm border border-slate-100 dark:border-slate-800 space-y-4">
             <div className="flex items-center gap-2 text-slate-800 dark:text-slate-100 font-bold text-sm">
-              <User size={16} className="text-purple-500" />
+              <User size={16} className={`${accentTexts[accentColor] || "text-purple-500"}`} />
               <span>Account Summary</span>
             </div>
+            
+            {/* 🟢 ACCOUNT SUMMARY CARD CRADLES THE SYNCHRONIZED USERNAME */}
+            <div className="border border-slate-100 dark:border-slate-800 p-3 rounded-2xl bg-slate-50/50 dark:bg-slate-800/20 text-center mb-1">
+              <span className="text-[10px] text-slate-400 font-medium block uppercase tracking-wider">Active Workspace Identity</span>
+              <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100 mt-0.5 block truncate px-1">{currentUserUserName}</span>
+            </div>
+
             <div className="space-y-3 text-xs">
               {[
-                { label: "Member Since", val: "May 25, 2024", highlight: false },
+                { label: "Member Since", val: memberSince, highlight: false },
                 { label: "Account Type", val: "Premium", highlight: true },
-                { label: "Study Streak", val: "5 Days", highlight: true, color: "text-orange-500" },
-                { label: "Quizzes Taken", val: "48", highlight: false },
-                { label: "Total XP", val: "1,450 XP", highlight: false }
+                { label: "Study Streak", val: `${streak} Days`, highlight: true, color: "text-orange-500" },
+                { label: "Quizzes Mastered", val: `${quizzesMastered} Sets`, highlight: false },
+                { label: "Total XP", val: `${xp.toLocaleString()} XP`, highlight: false }
               ].map((row, idx) => (
                 <div key={idx} className="flex justify-between items-center border-b border-slate-50 dark:border-slate-800/50 pb-2 last:border-0 last:pb-0">
-                  <span className="text-slate-400 text-[11px]">{row.label}</span>
+                <span className="text-slate-400 text-[11px]">{row.label}</span>
                   <span className={`font-bold ${row.highlight ? row.color || "text-[#7C3AED]" : "text-slate-700 dark:text-slate-200"}`}>{row.val}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* PREMIUM SUBSCRIPTION CARD */}
           <div className="bg-gradient-to-br from-[#7C3AED] to-[#5B21B6] rounded-3xl p-5 text-white shadow-md space-y-4 relative overflow-hidden">
             <div className="space-y-1">
               <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold tracking-wider uppercase">Current Plan</span>
               <h4 className="font-bold text-base pt-1">Premium Plan</h4>
               <p className="text-[11px] text-purple-100">You have full access to all features.</p>
             </div>
-            <button className="w-full flex items-center justify-between bg-white/10 hover:bg-white/20 transition px-4 py-2.5 rounded-xl text-xs font-bold backdrop-blur-md">
+            <button type="button" className="w-full flex items-center justify-between bg-white/10 hover:bg-white/20 transition px-4 py-2.5 rounded-xl text-xs font-bold backdrop-blur-md">
               <span>Manage Subscription</span>
               <ChevronRight size={14} />
             </button>
           </div>
 
-          {/* QUICK ACTIONS PANEL */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-sm border border-slate-100 dark:border-slate-800 space-y-3">
             <h4 className="font-bold text-slate-800 dark:text-slate-100 text-xs px-1">Quick Actions</h4>
             <div className="space-y-1">
@@ -660,7 +667,7 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
               ].map((action, idx) => {
                 const Icon = action.icon;
                 return (
-                  <button key={idx} onClick={action.action} className="w-full flex items-center justify-between p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition group text-left">
+                  <button key={idx} type="button" onClick={action.action} className="w-full flex items-center justify-between p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition group text-left">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-slate-50 dark:bg-slate-800 group-hover:bg-purple-50 dark:group-hover:bg-purple-950/30 rounded-lg text-slate-400 group-hover:text-[#7C3AED] transition">
                         <Icon size={14} />
@@ -675,21 +682,19 @@ export default function Settings({ forcedSection, setForcedSection, setTopbarAva
               })}
             </div>
           </div>
-          {/* NEED HELP WIDGET */}
+
           <div className="bg-purple-50/50 dark:bg-purple-950/10 rounded-3xl p-5 border border-purple-100/50 dark:border-purple-900/20 space-y-3">
             <div className="flex items-center gap-2 font-bold text-xs text-[#7C3AED] dark:text-[#A78BFA]">
               <HelpCircle size={15} />
               <span>Need Help?</span>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed">Visit our Help Center for guides and support or contact our team.</p>
-            <button className="flex items-center gap-1.5 text-xs font-bold text-[#7C3AED] dark:text-[#A78BFA] hover:underline">
+            <button type="button" className="flex items-center gap-1.5 text-xs font-bold text-[#7C3AED] dark:text-[#A78BFA] hover:underline">
               <span>Go to Help Center</span>
               <ArrowUpRight size={12} />
             </button>
           </div>
-
         </div>
-
       </div>
     </div>
   );
