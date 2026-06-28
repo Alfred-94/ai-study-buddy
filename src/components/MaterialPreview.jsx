@@ -1,6 +1,6 @@
-import React from "react";
+ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, FileText, Download, ExternalLink, Minimize2 } from "lucide-react";
+import { X, FileText, Download, ExternalLink } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
 export default function MaterialPreview() {
@@ -11,6 +11,29 @@ export default function MaterialPreview() {
   const isPdf = activePreview.name?.toLowerCase().endsWith(".pdf");
   const isImage = /\.(jpg|jpeg|png|webp|gif)$/i.test(activePreview.name || "");
 
+  // --- UNIVERSAL STORAGE PATH CLEANER ---
+  // Normalizes both bucket names (hyphens) and storage folders (uploads) dynamically
+  const getCleanPreviewUrl = (rawUrl) => {
+    if (!rawUrl) return "";
+    
+    let clean = rawUrl;
+
+    // 1. Force the correct hyphenated bucket name string
+    if (clean.includes("/study_materials/")) {
+      clean = clean.replace("/study_materials/", "/study_materials/");
+    }
+
+    // 2. Fix subfolder variations: Map legacy "user_upload" folder paths to your active "uploads" folder
+    if (clean.includes("/user_upload/")) {
+      clean = clean.replace("/user_upload/", "/uploads/");
+    }
+
+    return clean;
+  };
+
+  const cleanUrl = getCleanPreviewUrl(activePreview.url);
+  // --------------------------------------
+
   const accentBgs = {
     purple: "bg-[#7C3AED]",
     blue: "bg-blue-500",
@@ -18,15 +41,6 @@ export default function MaterialPreview() {
     green: "bg-emerald-500",
     orange: "bg-orange-500",
     pink: "bg-rose-500"
-  };
-
-  const accentTexts = {
-    purple: "text-[#7C3AED]",
-    blue: "text-blue-500",
-    cyan: "text-cyan-500",
-    green: "text-emerald-500",
-    orange: "text-orange-500",
-    pink: "text-rose-500"
   };
 
   return (
@@ -57,7 +71,7 @@ export default function MaterialPreview() {
             {/* Quick Action Buttons array */}
             <div className="flex items-center gap-2">
               <a
-                href={activePreview.url}
+                href={cleanUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="p-2.5 text-gray-400 hover:text-slate-600 dark:hover:text-slate-200 bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700/60 rounded-xl shadow-sm transition"
@@ -78,15 +92,15 @@ export default function MaterialPreview() {
           {/* Core Content Render Block Viewport slot */}
           <div className="flex-1 bg-slate-100 dark:bg-slate-950 relative p-4 flex items-center justify-center overflow-hidden">
             {isPdf ? (
-              <iframe
-                src={`${activePreview.url}#toolbar=0`}
+                <iframe
+                src={`${cleanUrl}#toolbar=0`}
                 title="Document View Frame"
                 className="w-full h-full rounded-2xl border border-gray-200/40 dark:border-slate-800 shadow-inner bg-white"
               />
             ) : isImage ? (
               <div className="w-full h-full flex items-center justify-center p-2 overflow-auto">
                 <img
-                  src={activePreview.url}
+                  src={cleanUrl}
                   alt="Resource High Fidelity Render"
                   className="max-w-full max-h-full object-contain rounded-2xl shadow-md border border-white dark:border-slate-800"
                 />
@@ -102,7 +116,7 @@ export default function MaterialPreview() {
                   Direct rendering is optimized for PDFs and Images. You can inspect this data component directly via external modules.
                 </p>
                 <a
-                  href={activePreview.url}
+                  href={cleanUrl}
                   download
                   className={`mt-5 inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-white font-bold text-xs shadow-md ${accentBgs[accentColor] || "bg-[#7C3AED]"} transition-all active:scale-95`}
                 >

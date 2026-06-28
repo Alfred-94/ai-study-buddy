@@ -158,19 +158,20 @@ export default function NotesWorkspace() {
         }
       }
 
-      const targetFunction = actionName.includes("Quiz") ? "generate-quiz" : "ai-coach";
-      
-      const { data, error } = await supabase.functions.invoke(targetFunction, {
-        body: {
-          instruction: promptInstruction,
-          storagePath: activeFile.storage_path || null, 
-          bucketName: "study_materials",
-          documentContent: currentContextText
-        },
-      });
+      const targetFunction = actionName.includes("Quiz") ? "generate-quiz" : "gemini-coach";
 
-      if (error) throw error;
-      setAiOutputContent(data.result || "AI completed processing with an empty response.");
+const { data, error } = await supabase.functions.invoke(targetFunction, {
+  body: {
+    prompt:  `${promptInstruction}\n\n${currentContextText}`,
+    fileUrl: null,
+    mimeType: "application/pdf"
+  },
+});
+
+if (error) throw error;
+
+const result = data.candidates?.[0]?.content?.parts?.[0]?.text || "AI completed processing with an empty response.";
+setAiOutputContent(result);
 
     } catch (err) {
       console.error("AI execution error:", err);

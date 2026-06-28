@@ -22,18 +22,37 @@ export default function MaterialUpload({ userId }) {
   const [uploading, setUploading] = useState(false);
   const [notification, setNotification] = useState(null);
 
+  // Synchronize assets directly out of DB on initialization
   useEffect(() => {
-  if (!userId) return;
-  const load = async () => {
-    const { data } = await supabase
-      .from('study_materials')
-      .select('*')
-      .eq('user_id', userId);
-    if (data && data.length > 0) setMaterials(data);
-   };
-   load();
-   }, 
-   [userId]);
+    if (!userId) return;
+    const load = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('study_materials')
+          .select('*')
+          .eq('user_id', userId);
+        
+        if (error) throw error;
+        
+        if (data) {
+          // Normalize DB snake_case fields into app camelCase definitions smoothly
+          const normalizedMaterials = data.map(row => ({
+            id: row.id,
+            name: row.name || row.title,
+            size: row.size || "0.00 MB",
+            uploadedAt: row.uploaded_at ? new Date(row.uploaded_at).toLocaleDateString() : new Date().toLocaleDateString(),
+            type: row.type || "application/pdf",
+            url: row.url,
+            storage_path: row.file_path // cross reference path mapping safely
+          }));
+          setMaterials(normalizedMaterials);
+        }
+      } catch (err) {
+        console.error("Failed loading data from study_materials database table:", err.message);
+      }
+    };
+    load();
+  }, [userId, setMaterials]);
 
   // Helper utility to style file icons individually by type extension
   const getFileIconStyles = (fileName) => {
@@ -46,9 +65,11 @@ export default function MaterialUpload({ userId }) {
 
   // Helper utility to calculate combined file banking sizes safely
   const calculateTotalStorage = () => {
-    if (!materials || materials.length === 0) return "0.00 MB";
-    const total = materials.reduce((acc, curr) => {
-      const val = parseFloat(curr.size) || 0;
+    // Coerce materials state into array bounds regardless of initial context values
+    const materialsArray = Array.isArray(materials) ? materials : [];
+    if (materialsArray.length === 0) return "0.00 MB";
+    const total = materialsArray.reduce((acc, curr) => {
+      const val = parseFloat(curr?.size) || 0;
       return acc + val;
     }, 0);
     return `${total.toFixed(2)} MB`;
@@ -60,12 +81,27 @@ export default function MaterialUpload({ userId }) {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // 📥 Core Upload Pipeline
+ // 📥 Core Upload Pipeline
   const handleUpload = async (files) => {
     if (!files || files.length === 0) return;
     
+    // --- ADD THIS SESSION LOOKUP FALLBACK ---
+    let activeUserId = userId;
+    if (!activeUserId) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        activeUserId = user.id;
+      }
+    }
+
+    if (!activeUserId) {
+      triggerNotification("error", "User authentication missing. Please login to upload.");
+      return;
+    }
+    // ----------------------------------------
+    
     setUploading(true);
-    const uploadedFiles = [];
+    const successfullyAddedNodes = [];
 
     for (const file of Array.from(files)) {
       // Strict 45MB Frontend Validation Gate
@@ -78,82 +114,111 @@ export default function MaterialUpload({ userId }) {
 
       try {
         const cleanName = `${Date.now()}_${file.name.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const targetStoragePath = `uploads/${cleanName}`;
 
-        const { data, error } = await supabase.storage
-          .from("study-materials")
-          .upload(`uploads/${cleanName}`, file, {
+        // 1. Storage Bucket upload pass
+        const { data: storageData, error: storageError } = await supabase.storage
+          .from("study_materials")
+          .upload(targetStoragePath, file, {
             cacheControl: "3600",
-            upsert: false,
+            upsert: true,
           });
 
-        if (error) throw error;
+        if (storageError) throw storageError;
 
+        // 2. Fetch accessible url string coordinates
         const { data: urlData } = supabase.storage
-          .from("study-materials")
-          .getPublicUrl(`uploads/${cleanName}`);
+          .from("study_materials")
+          .getPublicUrl(targetStoragePath);
 
-        const materialRecord = {
-          id: data.path,
+        const calculatedSizeStr = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+        const systemTimestamp = new Date().toISOString();
+
+        // 3. Persistent record insert directly into Table Editor using activeUserId
+        const { data: dbInsertData, error: dbError } = await supabase
+          .from('study_materials')
+          .insert({
+            user_id: activeUserId, // <-- Changed from userId to activeUserId
+            title: file.name,
+            name: file.name,
+            file_path: targetStoragePath, 
+            url: urlData.publicUrl,
+            size: calculatedSizeStr,
+            type: file.type || "application/pdf",
+            uploaded_at: systemTimestamp,
+          })
+          .select(); 
+
+        if (dbError) throw dbError;
+
+        const savedRecordRow = dbInsertData?.[0];
+        const normalizedFileNode = {
+          id: savedRecordRow ? savedRecordRow.id : crypto.randomUUID(), 
           name: file.name,
-          size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-          uploadedAt: new Date().toLocaleDateString(),
+          size: calculatedSizeStr,
+          uploadedAt: new Date(systemTimestamp).toLocaleDateString(),
           type: file.type,
           url: urlData.publicUrl,
+          storage_path: targetStoragePath
         };
 
-        uploadedFiles.push(materialRecord);
-        setActivePreview(materialRecord);
-
-        // ADD THIS - save to database so it persists
-const { error: dbError } = await supabase
-  .from('study_materials')
-  .insert({
-    user_id: userId,
-    title: file.name,
-    name: file.name,
-    file_path: data.path,
-    url: urlData.publicUrl,
-    size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-    type: file.type,
-    uploaded_at: new Date().toISOString(),
-  });
-
-if (dbError) console.error('DB insert error:', dbError);
+        successfullyAddedNodes.push(normalizedFileNode);
+        setActivePreview(normalizedFileNode);
 
       } catch (err) {
         console.error("Storage upload exception caught:", err.message);
-        triggerNotification("error", `Failed to upload ${file.name}: ${err.message}`);
+        triggerNotification("error", `Failed to process ${file.name}: ${err.message}`);
       }
     }
 
-    if (uploadedFiles.length > 0) {
-      setMaterials((prev) => [...(prev || []), ...uploadedFiles]);
-      triggerNotification("success", `Successfully saved ${uploadedFiles.length} file(s) to your File Bank.`);
+    if (successfullyAddedNodes.length > 0) {
+      setMaterials((prev) => {
+        const baseArray = Array.isArray(prev) ? prev : [];
+        return [...baseArray, ...successfullyAddedNodes];
+      });
+      triggerNotification("success", `Successfully saved ${successfullyAddedNodes.length} file(s) to your File Bank.`);
     }
     
     setUploading(false);
   };
 
   // 🗑 Asset Deletion Flow
-  const deleteMaterial = async (id, e) => {
+  const deleteMaterial = async (targetFile, e) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to remove this file from your File Bank?")) return;
+    if (!window.confirm(`Are you sure you want to remove "${targetFile.name}" permanently from your File Bank?`)) return;
+    
     try {
-      const { error } = await supabase.storage
-        .from("study-materials")
-        .remove([id]);
+      // 1. Check if we have a tracking reference to drop from storage bucket
+      if (targetFile.storage_path) {
+        await supabase.storage
+          .from("study_materials")
+          .remove([targetFile.storage_path]);
+      }
 
-      if (error) throw error;
-      setMaterials((prev) => (prev || []).filter((item) => item.id !== id));
+      // 2. Erase the record from your database Table Editor completely using primary id tracking
+      const { error: dbDeleteError } = await supabase
+        .from('study_materials')
+        .delete()
+        .eq('id', targetFile.id);
+
+      if (dbDeleteError) throw dbDeleteError;
+
+      // 3. Clear local state components instantly to match dashboard layouts 
+      setMaterials((prev) => {
+        const baseArray = Array.isArray(prev) ? prev : [];
+        return baseArray.filter((item) => item.id !== targetFile.id);
+      });
+      
       setActivePreview(null);
-      triggerNotification("success", "File successfully cleared from your Bank storage.");
+      triggerNotification("success", "File successfully cleared from database and cloud storage.");
     } catch (err) {
-      console.error("Delete failed:", err.message);
-      triggerNotification("error", "Could not remove the asset from remote cloud nodes.");
+      console.error("Transaction deletion flow failed:", err.message);
+      triggerNotification("error", `Could not remove asset cleanly: ${err.message}`);
     }
   };
 
-  return (
+  const safeMaterialsList = Array.isArray(materials) ? materials : [];
+     return (
     <div className="w-full max-w-6xl mx-auto space-y-8 pb-12 text-slate-700 dark:text-slate-300">
       
       {/* Notifications Dynamic Banner */}
@@ -185,7 +250,7 @@ if (dbError) console.error('DB insert error:', dbError);
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">File Bank Vault</div>
             <div className="text-xs font-black text-slate-800 dark:text-white font-mono">
-              {materials?.length || 0} Files Locked ({calculateTotalStorage()})
+              {safeMaterialsList.length} Files Locked ({calculateTotalStorage()})
             </div>
           </div>
         </div>
@@ -221,7 +286,7 @@ if (dbError) console.error('DB insert error:', dbError);
             <p className="text-slate-800 dark:text-slate-200 font-extrabold text-sm tracking-tight">
               {uploading ? "Uploading your study materials..." : "Drag & drop files straight into your bank"}
             </p>
-            <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 font-medium">or</p>
+             <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 font-medium">or</p>
             
             <label className="mt-4 px-6 py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-xl shadow-md cursor-pointer transition-all active:scale-[0.98]">
               Browse Files
@@ -248,13 +313,13 @@ if (dbError) console.error('DB insert error:', dbError);
           </h3>
           
           <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1 bg-slate-50/50 dark:bg-slate-900/20 p-3 rounded-[24px] border border-slate-100 dark:border-slate-800/60">
-            {(!materials || materials.length === 0) ? (
+            {safeMaterialsList.length === 0 ? (
               <div className="flex flex-col items-center justify-center p-12 bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs font-medium text-slate-400 dark:text-slate-500 shadow-sm h-[314px]">
                 <Layers className="w-6 h-6 text-slate-300 dark:text-slate-700 mb-2 stroke-[1.5]" />
                 Your File Bank is empty.<br />Upload a document on the left to save it here.
               </div>
             ) : (
-              materials.map((file) => {
+              safeMaterialsList.map((file) => {
                 const styles = getFileIconStyles(file.name);
                 return (
                   <div 
@@ -279,7 +344,7 @@ if (dbError) console.error('DB insert error:', dbError);
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={(e) => deleteMaterial(file.id, e)}
+                        onClick={(e) => deleteMaterial(file, e)}
                         className="p-1.5 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-rose-500 dark:text-slate-700 dark:hover:text-rose-400 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-all"
                         title="Delete from bank"
                       >
